@@ -1,0 +1,70 @@
+# 动力学：一维线性预报模式 x_(k+1) = M(x_k) = 0.8 * x_k
+# 同化窗口：k=0,1,2,3   4个时刻
+# 代价函数 J = 0.5 * invB * (x0_in - xb) ** 2 + 0.5 * invR * sum((x_seq - y) ** 2)
+# 简化设置：H是恒等观测算子；B，R都是标量（对角协方差）
+
+import torch
+import matplotlib.pyplot as plt
+
+# 设备设置
+device = "cpu"
+
+# plt 环境配置
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+
+# 背景场 xb
+xb = torch.tensor(0.0, device=device)
+# 观测 y：4个时刻的观测
+y = torch.tensor([1.2, 0.95, 0.75, 0.60], device=device)
+# 误差协方差倒数（标量简化版）
+invB = torch.tensor(1.0)
+invR = torch.tensor(10.0)
+# 线性模式算子
+alpha = 0.8
+
+# 待反演初始场
+x0 = torch.tensor(0.0, requires_grad=True, device=device)
+
+# 可微分预报模式：输入x0, 输出窗口内全部时序预报 [1,2,3,4]
+# 多时刻线性预报模式
+def forward_model(x0_in):
+    xs = []
+    xk = x0_in
+    for _ in range(4):
+        xs.append(xk)
+        xk = alpha * xk  # x_(k+1) = alpha * x_k
+    return torch.stack(xs)
+
+# 代价函数
+def cost_function(x0_in):
+    x_seq = forward_model(x0_in)
+    Jb = 0.5 * invB * (x0_in - xb) ** 2
+    Jo = 0.5 * invR * torch.sum((x_seq - y) ** 2)
+    J = Jb + Jo
+    return J
+
+# LBFGS优化器
+optimizer = torch.optim.LBFGS([x0], lr=1.0, max_iter=50)
+loss_history = []
+
+def closure():
+    optimizer.zero_grad()
+    J = cost_function(x0)
+    J.backward()
+    return J
+
+# 迭代同化
+for it in range(15):
+    J_val = optimizer.step(closure)
+    loss_history.append(J_val.item())
+    print(f"Iter {it:2d}, J = {J_val.item():.6f}, x0 = {x0.detach().item():.4f}")
+
+# 结果可视化
+x_seq_analyzed = forward_model(x0.detach())
+plt.figure(figsize=(6,3))
+plt.plot(range(4), y.numpy(), 'ro', label="观测y")
+plt.plot(range(4), x_seq_analyzed.numpy(), 'b-', label="同化后预报")
+plt.legend()
+plt.title("一维玩具4D-Var同化")
+plt.show()
